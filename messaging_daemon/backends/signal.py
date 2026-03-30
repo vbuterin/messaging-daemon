@@ -64,9 +64,12 @@ class SignalBackend(Backend):
     # ── Recipient helpers ─────────────────────────────────────────────────────
 
     def _classify(self, recipient: str) -> str:
-        """Return 'number', 'username', or 'group'."""
+        """Return 'number', 'uuid', 'username', or 'group'."""
         if recipient.startswith("+"):
             return "number"
+        # UUIDs are 36 chars in the form xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+        if len(recipient) == 36 and recipient.count("-") == 4:
+            return "uuid"
         if "." in recipient and len(recipient) < 40:
             return "username"
         return "group"
@@ -116,8 +119,7 @@ class SignalBackend(Backend):
                 pass
             return recipient
 
-        # For UUIDs (phone-number-privacy mode), look up the contact name
-        if "-" in recipient and len(recipient) == 36:
+        if kind == "uuid":
             name = self._contact_name(account, recipient)
             if name:
                 return name
@@ -128,7 +130,7 @@ class SignalBackend(Backend):
 
     def send(self, account: str, recipient: str, body: str, subject: str | None = None) -> None:
         kind = self._classify(recipient)
-        if kind in ("number", "username"):
+        if kind in ("number", "username", "uuid"):
             cmd = [SIGNAL_CLI, "-a", account, "send", "-m", body, recipient]
         else:
             cmd = [SIGNAL_CLI, "-a", account, "send", "-m", body, "-g", recipient]

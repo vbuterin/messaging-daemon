@@ -74,23 +74,54 @@ class SignalBackend(Backend):
     def is_self(self, account: str, recipient: str) -> bool:
         return recipient.strip() == account.strip()
 
-    def resolve_display_name(self, account: str, recipient: str) -> str:
-        if self._classify(recipient) != "group":
-            return recipient
+    def _contact_name(self, account: str, uuid: str) -> str | None:
+        """Look up a display name for a UUID via listContacts."""
         try:
             result = subprocess.run(
-                [SIGNAL_CLI, "-a", account, "--output=json", "listGroups"],
+                [SIGNAL_CLI, "-a", account, "--output=json", "listContacts"],
                 capture_output=True, text=True, timeout=10,
             )
             if result.returncode != 0:
-                return recipient
-            # listGroups outputs a single JSON array, not one object per line
-            groups = json.loads(result.stdout)
-            for group in groups:
-                if group.get("id") == recipient:
-                    return group.get("name", recipient)
+                return None
+            contacts = json.loads(result.stdout)
+            for c in contacts:
+                if c.get("uuid") == uuid:
+                    # Prefer explicit name, then profile name, then number
+                    name = c.get("name") or ""
+                    if not name:
+                        profile = c.get("profile") or {}
+                        given = profile.get("givenName") or ""
+                        family = profile.get("familyName") or ""
+                        name = (given + " " + family).strip()
+                    return name or c.get("number") or None
         except Exception:
             pass
+        return None
+
+    def resolve_display_name(self, account: str, recipient: str) -> str:
+        kind = self._classify(recipient)
+
+        if kind == "group":
+            try:
+                result = subprocess.run(
+                    [SIGNAL_CLI, "-a", account, "--output=json", "listGroups"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result.returncode == 0:
+                    groups = json.loads(result.stdout)
+                    for group in groups:
+                        if group.get("id") == recipient:
+                            return group.get("name", recipient)
+            except Exception:
+                pass
+            return recipient
+
+        # For UUIDs (phone-number-privacy mode), look up the contact name
+        if "-" in recipient and len(recipient) == 36:
+            name = self._contact_name(account, recipient)
+            if name:
+                return name
+
         return recipient
 
     # ── Sending ───────────────────────────────────────────────────────────────

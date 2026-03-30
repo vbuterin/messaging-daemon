@@ -84,13 +84,11 @@ class SignalBackend(Backend):
             )
             if result.returncode != 0:
                 return recipient
-            for line in result.stdout.strip().splitlines():
-                try:
-                    group = json.loads(line)
-                    if group.get("id") == recipient:
-                        return group.get("name", recipient)
-                except json.JSONDecodeError:
-                    continue
+            # listGroups outputs a single JSON array, not one object per line
+            groups = json.loads(result.stdout)
+            for group in groups:
+                if group.get("id") == recipient:
+                    return group.get("name", recipient)
         except Exception:
             pass
         return recipient

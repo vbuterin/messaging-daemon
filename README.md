@@ -10,7 +10,9 @@ The recommended usage is to run AI agents and other untrusted software from insi
 - **Signal** via `signal-cli`
 - **Email** via IMAP/SMTP (tested with Protonmail Bridge; works with any standard provider)
 
-## Installation (NixOS)
+## Installation
+
+### NixOS
 
 Add `messaging-daemon.nix` to your imports and rebuild:
 
@@ -20,6 +22,56 @@ imports = [
   ./protonmail-bridge.nix  # if using Protonmail
 ];
 ```
+
+### macOS
+
+This project is mostly portable Python code and can run on macOS without the NixOS module.
+
+Requirements:
+- Python 3.11+
+- `signal-cli` installed and already linked or registered
+- access to your IMAP/SMTP provider (for Gmail, use an app password)
+
+Install the package locally:
+
+```bash
+cd /path/to/messaging-daemon
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+Run the daemon in the foreground:
+
+```bash
+messaging-daemon run
+```
+
+Configure Signal:
+
+```bash
+signal-cli link -n "my-mac"
+messaging-daemon signal setup +1XXXXXXXXXX
+```
+
+Configure Gmail:
+
+```bash
+messaging-daemon email add \
+  --email you@gmail.com \
+  --password YOUR_GMAIL_APP_PASSWORD \
+  --imap-host imap.gmail.com --imap-port 993 --imap-ssl true \
+  --smtp-host smtp.gmail.com --smtp-port 587
+```
+
+Check the daemon:
+
+```bash
+curl "http://localhost:6000/accounts"
+curl "http://localhost:6000/status"
+```
+
+Optional: to keep it running in the background on macOS, create a `launchd` agent that starts `python -m messaging_daemon run` or the installed `messaging-daemon run` command.
 
 ## Documentation
 

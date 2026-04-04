@@ -45,6 +45,8 @@ If either backend shows an empty list, setup is required. **Do not attempt to ru
 ## Setup (instructions to give to the user — do not run these yourself)
 
 > **Agent note:** If setup is needed, copy the relevant instructions below and present them to the user. Remind them that these commands must be run in their own terminal, not inside any sandbox or agent environment. Wait for them to confirm setup is complete before proceeding.
+>
+> **Platform note:** The original service-management examples below assume NixOS/systemd. On macOS, use the same `messaging-daemon ...` account-setup commands, but run the daemon directly (`messaging-daemon run`) or via `launchd` instead of `systemctl`.
 
 ---
 

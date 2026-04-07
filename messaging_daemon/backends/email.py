@@ -15,6 +15,7 @@ CLI:
 import argparse
 import email as email_lib
 import imaplib
+import ipaddress
 import json
 import smtplib
 import sqlite3
@@ -160,24 +161,35 @@ class EmailBackend(Backend):
 
     # ── IMAP helpers ──────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _is_loopback_host(host: str) -> bool:
+        host = host.strip().lower().strip("[]")
+        if host == "localhost":
+            return True
+        try:
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return False
+
+    @classmethod
+    def _tls_context_for_host(cls, host: str) -> ssl.SSLContext:
+        ctx = ssl.create_default_context()
+        if cls._is_loopback_host(host):
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
     def _imap_connect(self, acct: dict) -> imaplib.IMAP4 | imaplib.IMAP4_SSL:
         host = acct["imap_host"]
         port = int(acct["imap_port"])
         use_ssl = acct.get("imap_ssl", "true").lower() == "true"
+        ctx = self._tls_context_for_host(host)
 
         if use_ssl:
-            if host in ("127.0.0.1", "localhost"):
-                ctx = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-                return imaplib.IMAP4_SSL(host, port, ssl_context=ctx)
-            return imaplib.IMAP4_SSL(host, port)
+            return imaplib.IMAP4_SSL(host, port, ssl_context=ctx)
         else:
             conn = imaplib.IMAP4(host, port)
             if acct.get("imap_starttls", "true").lower() == "true":
-                ctx = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
                 conn.starttls(ssl_context=ctx)
             return conn
 
@@ -237,6 +249,7 @@ class EmailBackend(Backend):
         port = int(acct["smtp_port"])
         use_ssl = acct.get("smtp_ssl", "false").lower() == "true"
         use_tls = acct.get("smtp_tls", "true").lower() == "true"
+        ctx = self._tls_context_for_host(host)
 
         msg = MIMEMultipart("alternative")
         msg["From"] = account
@@ -245,17 +258,11 @@ class EmailBackend(Backend):
         msg.attach(MIMEText(body, "plain"))
 
         if use_ssl:
-            if host in ("127.0.0.1", "localhost"):
-                ctx = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-                smtp = smtplib.SMTP_SSL(host, port, context=ctx)
-            else:
-                smtp = smtplib.SMTP_SSL(host, port)
+            smtp = smtplib.SMTP_SSL(host, port, context=ctx)
         else:
             smtp = smtplib.SMTP(host, port)
             if use_tls:
-                smtp.starttls()
+                smtp.starttls(context=ctx)
 
         with smtp:
             smtp.login(account, acct["password"])

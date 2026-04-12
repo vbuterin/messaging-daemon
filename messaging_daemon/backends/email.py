@@ -266,6 +266,7 @@ class EmailBackend(Backend):
     def _poll_account_folder(self, db: sqlite3.Connection, acct: dict, folder: str) -> int:
         conn = self._imap_connect(acct)
         try:
+            conn.login(acct["email"], acct["password"])  # Authenticate before selecting folder
             conn.select(f'"{folder}"')
             _, data = conn.uid("search", None, "ALL")
             uids = data[0].split() if data[0] else []

@@ -170,8 +170,9 @@ class EmailBackend(Backend):
                 ctx = ssl.create_default_context()
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
-                return imaplib.IMAP4_SSL(host, port, ssl_context=ctx)
-            return imaplib.IMAP4_SSL(host, port)
+                conn = imaplib.IMAP4_SSL(host, port, ssl_context=ctx)
+            else:
+                conn = imaplib.IMAP4_SSL(host, port)
         else:
             conn = imaplib.IMAP4(host, port)
             if acct.get("imap_starttls", "true").lower() == "true":
@@ -179,7 +180,9 @@ class EmailBackend(Backend):
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
                 conn.starttls(ssl_context=ctx)
-            return conn
+
+        conn.login(acct["email"], acct["password"])
+        return conn
 
     @staticmethod
     def _decode_header(raw: str | bytes | None) -> str:
@@ -191,10 +194,30 @@ class EmailBackend(Backend):
         decoded = []
         for part, charset in parts:
             if isinstance(part, bytes):
-                decoded.append(part.decode(charset or "utf-8", errors="replace"))
+                for enc in [charset, "utf-8", "latin-1"]:
+                    if not enc:
+                        continue
+                    try:
+                        decoded.append(part.decode(enc, errors="replace"))
+                        break
+                    except (LookupError, TypeError):
+                        continue
+                else:
+                    decoded.append(part.decode("latin-1", errors="replace"))
             else:
                 decoded.append(part)
         return " ".join(decoded)
+
+    @staticmethod
+    def _decode_payload(payload: bytes, charset: str | None) -> str:
+        for enc in [charset, "utf-8", "latin-1"]:
+            if not enc:
+                continue
+            try:
+                return payload.decode(enc, errors="replace")
+            except (LookupError, TypeError):
+                continue
+        return payload.decode("latin-1", errors="replace")
 
     @staticmethod
     def _get_plain_body(msg: email_lib.message.Message) -> str:
@@ -205,15 +228,11 @@ class EmailBackend(Backend):
                         continue
                     payload = part.get_payload(decode=True)
                     if payload:
-                        return payload.decode(
-                            part.get_content_charset() or "utf-8", errors="replace"
-                        )
+                        return EmailBackend._decode_payload(payload, part.get_content_charset())
         else:
             payload = msg.get_payload(decode=True)
             if payload:
-                return payload.decode(
-                    msg.get_content_charset() or "utf-8", errors="replace"
-                )
+                return EmailBackend._decode_payload(payload, msg.get_content_charset())
         return ""
 
     @staticmethod
@@ -269,7 +288,7 @@ class EmailBackend(Backend):
             conn.login(acct["email"], acct["password"])  # Authenticate before selecting folder
             conn.select(f'"{folder}"')
             _, data = conn.uid("search", None, "ALL")
-            uids = data[0].split() if data[0] else []
+            uids = (data[0].split() if data[0] else [])[-100:]
 
             known = {
                 row[0]

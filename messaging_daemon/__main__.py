@@ -20,10 +20,12 @@ from .db import init_db
 
 from .backends.signal import SignalBackend
 from .backends.email import EmailBackend
+from .backends.telegram import TelegramBackend
 
 BACKENDS: dict = {
-    "signal": SignalBackend(),
-    "email":  EmailBackend(),
+    "signal":   SignalBackend(),
+    "email":    EmailBackend(),
+    "telegram": TelegramBackend(),
 }
 
 # ── Shared imports ────────────────────────────────────────────────────────────

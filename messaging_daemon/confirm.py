@@ -6,10 +6,25 @@ a random token. Each entry carries enough info to call backend.send() and
 to render a confirmation page via backend.confirmation_fields().
 
 This module is intentionally free of any Signal or email imports.
+
+macOS notes
+-----------
+Port 7000 is used by macOS AirPlay Receiver, which will prevent the server
+from binding. To free it:
+  System Settings → General → AirDrop & Handoff → AirPlay Receiver → Off
+
+Alternatively change CONFIRM_PORT to any unused port (e.g. 7001), but note
+that Chrome blocks several ports (6000, 7000 among others) — use Safari or
+Firefox if you keep ports in that range.
+
+The confirmation URL uses 127.0.0.1 rather than localhost because macOS
+resolves localhost to ::1 (IPv6) while the server binds to IPv4 only,
+causing Safari to get a blank page.
 """
 
 import html as html_lib
 import secrets
+import subprocess
 import threading
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -42,7 +57,9 @@ def enqueue(
             "subject":   subject,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-    return f"http://localhost:{CONFIRM_PORT}/confirm?token={token}"
+    url = f"http://127.0.0.1:{CONFIRM_PORT}/confirm?token={token}"
+    subprocess.Popen(["open", "-a", "Safari", url], close_fds=True)
+    return url
 
 
 def pending_count() -> int:

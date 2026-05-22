@@ -385,6 +385,17 @@ class TelegramBackend(Backend):
         return total
 
     async def _poll_account(self, db: sqlite3.Connection, acct: dict) -> int:
+        # We're called on the runner thread; the `db` connection from
+        # poll_loop was created on a different thread and SQLite refuses
+        # cross-thread use. Open a fresh connection here.
+        del db  # not safe to use on this thread
+        thread_db = sqlite3.connect(DB_PATH)
+        try:
+            return await self._poll_account_inner(thread_db, acct)
+        finally:
+            thread_db.close()
+
+    async def _poll_account_inner(self, db: sqlite3.Connection, acct: dict) -> int:
         client = await self._client_for(acct)
         my_id = (self._me_cache.get(acct["phone"]) or {}).get("id")
 

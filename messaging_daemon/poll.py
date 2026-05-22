@@ -1,16 +1,14 @@
 """
 poll.py — shared async poll loop.
 
-Iterates over all registered backends, calls backend.poll(db) for each,
-and re-reads backend account lists from the DB on every iteration so that
-newly added accounts take effect without a restart.
+Iterates over all registered backends and calls backend.poll() on each.
+Each backend opens and closes its own sqlite3 connection internally — see
+Backend.poll's docstring for why.
 """
 
 import asyncio
-import sqlite3
 from datetime import datetime, timezone
 
-from .db import DB_PATH, init_db
 from . import http_api
 
 POLL_INTERVAL = 60  # seconds
@@ -19,15 +17,13 @@ POLL_INTERVAL = 60  # seconds
 async def poll_loop(backends: dict, interval: int = POLL_INTERVAL) -> None:
     while True:
         print(f"[{datetime.now(timezone.utc).isoformat()}] Polling {len(backends)} backend(s)…")
-        db = sqlite3.connect(DB_PATH)
         total = 0
         for name, backend in backends.items():
             try:
-                n = backend.poll(db)
+                n = backend.poll()
                 total += n
             except Exception as exc:
                 print(f"  [{name}] Poll error: {exc}")
-        db.close()
         http_api.set_last_poll(datetime.now(timezone.utc))
         print(f"  Total new: {total}")
         await asyncio.sleep(interval)

@@ -220,7 +220,7 @@ class SignalBackend(Backend):
 
     # ── Polling ───────────────────────────────────────────────────────────────
 
-    def poll(self, db: sqlite3.Connection) -> int:
+    def poll(self) -> int:
         account = self.get_account()
         if not account:
             print(f"  [signal] No account configured — skipping poll.")
@@ -234,8 +234,15 @@ class SignalBackend(Backend):
             print(f"  [signal] signal-cli error: {result.stderr.strip()}")
             return 0
 
+        db = sqlite3.connect(DB_PATH)
+        try:
+            return self._store_signal_messages(db, account, result.stdout)
+        finally:
+            db.close()
+
+    def _store_signal_messages(self, db: sqlite3.Connection, account: str, stdout: str) -> int:
         count = 0
-        for line in result.stdout.strip().splitlines():
+        for line in stdout.strip().splitlines():
             if not line.strip():
                 continue
             try:

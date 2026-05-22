@@ -355,10 +355,12 @@ class TelegramBackend(Backend):
 
     # ── Polling ───────────────────────────────────────────────────────────────
 
-    def poll(self, db: sqlite3.Connection) -> int:
-        db_conn = sqlite3.connect(DB_PATH)
-        accts = self._load_accounts(db_conn)
-        db_conn.close()
+    def poll(self) -> int:
+        db = sqlite3.connect(DB_PATH)
+        try:
+            accts = self._load_accounts(db)
+        finally:
+            db.close()
         if not accts:
             print("  [telegram] No accounts configured — skipping poll.")
             return 0
@@ -366,7 +368,7 @@ class TelegramBackend(Backend):
         total = 0
         for acct in accts:
             try:
-                n = _runner.run(self._poll_account(db, acct))
+                n = _runner.run(self._poll_account(acct))
                 if n:
                     print(f"  [telegram] {acct['phone']}: {n} new")
                 total += n
@@ -374,7 +376,7 @@ class TelegramBackend(Backend):
                 print(f"  [telegram] Connection error for {acct['phone']}: {exc} — retrying once")
                 try:
                     _runner.run(self._drop_client(acct["phone"]))
-                    n = _runner.run(self._poll_account(db, acct))
+                    n = _runner.run(self._poll_account(acct))
                     if n:
                         print(f"  [telegram] {acct['phone']}: {n} new (after reconnect)")
                     total += n
@@ -384,16 +386,13 @@ class TelegramBackend(Backend):
                 print(f"  [telegram] Error polling {acct['phone']}: {exc}")
         return total
 
-    async def _poll_account(self, db: sqlite3.Connection, acct: dict) -> int:
-        # We're called on the runner thread; the `db` connection from
-        # poll_loop was created on a different thread and SQLite refuses
-        # cross-thread use. Open a fresh connection here.
-        del db  # not safe to use on this thread
-        thread_db = sqlite3.connect(DB_PATH)
+    async def _poll_account(self, acct: dict) -> int:
+        # Connections cannot cross threads; open one local to the runner thread.
+        db = sqlite3.connect(DB_PATH)
         try:
-            return await self._poll_account_inner(thread_db, acct)
+            return await self._poll_account_inner(db, acct)
         finally:
-            thread_db.close()
+            db.close()
 
     async def _poll_account_inner(self, db: sqlite3.Connection, acct: dict) -> int:
         client = await self._client_for(acct)

@@ -9,7 +9,6 @@ To add a new backend:
 """
 
 import argparse
-import sqlite3
 from abc import ABC, abstractmethod
 
 
@@ -51,9 +50,13 @@ class Backend(ABC):
         """
 
     @abstractmethod
-    def poll(self, db: sqlite3.Connection) -> int:
+    def poll(self) -> int:
         """
         Fetch new inbound messages and store them via store_message().
+        Each backend manages its own sqlite3 connection — open one against
+        DB_PATH inside this method and close it before returning. (Connections
+        cannot be safely shared across threads, and some backends — notably
+        Telegram — run their I/O on a dedicated thread.)
         Returns the count of newly stored messages.
         """
 

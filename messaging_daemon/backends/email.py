@@ -311,29 +311,31 @@ class EmailBackend(Backend):
         finally:
             conn.logout()
 
-    def poll(self) -> int:
-        db = sqlite3.connect(DB_PATH)
-        try:
-            accts = self._load_accounts(db)
-            if not accts:
-                print(f"  [email] No accounts configured — skipping poll.")
-                return 0
+    def poll(self, db: sqlite3.Connection | None = None) -> int:
+        db_conn = sqlite3.connect(DB_PATH)
+        accts = self._load_accounts(db_conn)
+        db_conn.close()
 
-            total = 0
-            for acct in accts:
-                folders = acct.get("poll_folders", "INBOX").split(",")
-                for folder in folders:
-                    folder = folder.strip()
-                    try:
-                        n = self._poll_account_folder(db, acct, folder)
-                        if n:
-                            print(f"  [email] {acct['email']} / {folder}: {n} new")
-                        total += n
-                    except Exception as exc:
-                        print(f"  [email] Error polling {acct['email']} / {folder}: {exc}")
-            return total
-        finally:
-            db.close()
+        if not accts:
+            print(f"  [email] No accounts configured — skipping poll.")
+            return 0
+
+        if db is None:
+            db = sqlite3.connect(DB_PATH)
+
+        total = 0
+        for acct in accts:
+            folders = acct.get("poll_folders", "INBOX").split(",")
+            for folder in folders:
+                folder = folder.strip()
+                try:
+                    n = self._poll_account_folder(db, acct, folder)
+                    if n:
+                        print(f"  [email] {acct['email']} / {folder}: {n} new")
+                    total += n
+                except Exception as exc:
+                    print(f"  [email] Error polling {acct['email']} / {folder}: {exc}")
+        return total
 
     # ── Confirmation page fields ──────────────────────────────────────────────
 

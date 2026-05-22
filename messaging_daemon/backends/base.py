@@ -9,6 +9,7 @@ To add a new backend:
 """
 
 import argparse
+import sqlite3
 from abc import ABC, abstractmethod
 
 
@@ -50,14 +51,17 @@ class Backend(ABC):
         """
 
     @abstractmethod
-    def poll(self) -> int:
+    def poll(self, db: sqlite3.Connection | None = None) -> int:
         """
         Fetch new inbound messages and store them via store_message().
-        Each backend manages its own sqlite3 connection — open one against
-        DB_PATH inside this method and close it before returning. (Connections
-        cannot be safely shared across threads, and some backends — notably
-        Telegram — run their I/O on a dedicated thread.)
         Returns the count of newly stored messages.
+
+        `db` is an optional shared connection created by poll_loop on the
+        main thread. Backends that run entirely on that thread (signal,
+        email) can use it directly. Backends that hand work to another
+        thread (Telegram → Telethon's runner thread) must ignore it and
+        open their own connection, since sqlite3 connections cannot be
+        shared across threads.
         """
 
     @abstractmethod

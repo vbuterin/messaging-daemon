@@ -368,12 +368,16 @@ class TelegramBackend(Backend):
 
     # ── Polling ───────────────────────────────────────────────────────────────
 
-    def poll(self) -> int:
-        db = sqlite3.connect(DB_PATH)
+    def poll(self, db: sqlite3.Connection | None = None) -> int:
+        # We deliberately ignore the shared `db` from poll_loop: actual reads
+        # and writes happen on the Telethon runner thread, and sqlite3
+        # connections cannot be shared across threads.
+        del db
+        load_db = sqlite3.connect(DB_PATH)
         try:
-            accts = self._load_accounts(db)
+            accts = self._load_accounts(load_db)
         finally:
-            db.close()
+            load_db.close()
         if not accts:
             print("  [telegram] No accounts configured — skipping poll.")
             return 0

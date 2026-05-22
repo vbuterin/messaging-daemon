@@ -14,7 +14,7 @@ let
     };
 
     build-system = [ pkgs.python3.pkgs.setuptools ];
-    dependencies = [];
+    dependencies = [ pkgs.python3.pkgs.telethon ];
     doCheck = false;
   };
 in

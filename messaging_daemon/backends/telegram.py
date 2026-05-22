@@ -457,6 +457,11 @@ class TelegramBackend(Backend):
             if max_id is not None
         }
 
+        # Cap per-chat catch-up so a chat with thousands of unstored messages
+        # can't dominate a single poll cycle. If we hit the cap, the next poll's
+        # min_id picks up where we left off and we keep walking forward.
+        hard_cap = message_limit * 10
+
         count = 0
         async for dialog in client.iter_dialogs(limit=dialog_limit):
             chat = dialog.entity
@@ -466,9 +471,27 @@ class TelegramBackend(Backend):
             min_id = known_max.get(chat_id, 0)
 
             try:
-                msgs = await client.get_messages(
-                    chat, limit=message_limit, min_id=min_id,
-                )
+                if min_id == 0:
+                    # First time seeing this chat — bootstrap with the most
+                    # recent message_limit. iter_messages with reverse would
+                    # otherwise walk the entire chat history.
+                    page = await client.get_messages(chat, limit=message_limit)
+                    msgs = list(reversed(page))  # oldest-first for store order
+                else:
+                    # Page forward from min_id (exclusive) in ascending id
+                    # order so a partial fetch leaves a contiguous prefix
+                    # stored; the next poll's min_id will be the last-stored
+                    # id and we resume from there.
+                    msgs = [
+                        m async for m in client.iter_messages(
+                            chat, min_id=min_id, reverse=True, limit=hard_cap,
+                        )
+                    ]
+                    if len(msgs) >= hard_cap:
+                        print(
+                            f"  [telegram] {acct['phone']} dialog {chat_id}: "
+                            f"hit catch-up cap ({hard_cap}); continuing next poll"
+                        )
             except Exception as exc:
                 print(f"  [telegram] {acct['phone']} dialog {chat_id}: {exc}")
                 continue

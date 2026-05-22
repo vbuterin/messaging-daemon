@@ -13,7 +13,7 @@ Two HTTP servers run:
 - **Port 6000** — main API (safe to expose to untrusted software)
 - **Port 7000** — confirmation UI (human-facing only; keep away from untrusted software)
 
-**Important:** Sending to self completes immediately on both backends. Sending to anyone else returns a `confirm_url` that **must be shown to the user** — the message is not sent until the user opens that URL in their browser and clicks "Send".
+**Important:** Sending to self completes immediately on all backends. Sending to anyone else returns a `confirm_url` that **must be shown to the user** — the message is not sent until the user opens that URL in their browser and clicks "Send".
 
 > **Warning:** Message responses can be very long. In many circumstances it is more efficient to save the output to a file and then search or chunk it rather than reading it directly:
 > ```bash
@@ -194,7 +194,7 @@ sudo systemctl restart messaging-daemon
 
 ## Reading Messages
 
-All `/messages` queries work across both backends unless filtered with `?backend=`.
+All `/messages` queries work across all backends unless filtered with `?backend=`.
 
 ### All recent messages (most recent 100, all backends)
 ```bash

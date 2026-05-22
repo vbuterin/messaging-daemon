@@ -70,7 +70,19 @@ class TelegramBackend(Backend):
         self._clients: dict[str, object] = {}  # phone -> TelegramClient
         self._clients_lock = threading.Lock()
         # phone -> {"id": int, "username": str|None}; populated on first client use
+        # Written from the Telethon runner thread, read from the API/confirm/poll
+        # threads, so all access goes through _me_cache_lock.
         self._me_cache: dict[str, dict] = {}
+        self._me_cache_lock = threading.Lock()
+
+    def _get_me(self, phone: str) -> dict | None:
+        with self._me_cache_lock:
+            entry = self._me_cache.get(phone)
+            return dict(entry) if entry else None
+
+    def _set_me(self, phone: str, me: dict) -> None:
+        with self._me_cache_lock:
+            self._me_cache[phone] = me
 
     # ── Account management ────────────────────────────────────────────────────
 
@@ -209,7 +221,8 @@ class TelegramBackend(Backend):
             await client.connect()
             if not await client.is_user_authorized():
                 await client.send_code_request(phone)
-                # Prompt on the calling (main) thread via to_thread
+                # Read from stdin in a worker thread so the runner loop
+                # doesn't block while waiting on user input.
                 code = await asyncio.to_thread(
                     input, f"Enter the login code Telegram sent to {phone}: "
                 )
@@ -249,10 +262,10 @@ class TelegramBackend(Backend):
                 f"Re-run: messaging-daemon telegram add --phone {phone} ..."
             )
         me = await client.get_me()
-        self._me_cache[phone] = {
+        self._set_me(phone, {
             "id":       getattr(me, "id", None),
             "username": (getattr(me, "username", None) or "").lower() or None,
-        }
+        })
         with self._clients_lock:
             self._clients[phone] = client
         return client
@@ -277,7 +290,7 @@ class TelegramBackend(Backend):
             return True
         if r == account.strip().lower():
             return True
-        me = self._me_cache.get(account)
+        me = self._get_me(account)
         if me:
             if me.get("username") and r.lstrip("@") == me["username"]:
                 return True
@@ -396,26 +409,28 @@ class TelegramBackend(Backend):
 
     async def _poll_account_inner(self, db: sqlite3.Connection, acct: dict) -> int:
         client = await self._client_for(acct)
-        my_id = (self._me_cache.get(acct["phone"]) or {}).get("id")
+        my_id = (self._get_me(acct["phone"]) or {}).get("id")
 
         dialog_limit = int(acct.get("dialog_limit", DEFAULT_DIALOG_LIMIT))
         message_limit = int(acct.get("message_limit", DEFAULT_MESSAGE_LIMIT))
 
         # Build {chat_id: max_message_id} for what we've already stored.
-        known_max: dict[str, int] = {}
-        cur = db.execute(
-            "SELECT thread_id, uid FROM messages WHERE backend = ? AND account = ?",
-            (self.name, acct["phone"]),
-        )
-        for thread_id, uid in cur.fetchall():
-            if not thread_id or not uid or ":" not in uid:
-                continue
-            try:
-                msg_id = int(uid.rsplit(":", 1)[1])
-            except ValueError:
-                continue
-            if msg_id > known_max.get(thread_id, 0):
-                known_max[thread_id] = msg_id
+        # Do the per-thread MAX in SQLite so we don't pull every row into Python.
+        # uid format is "{chat_id}:{message_id}"; substr(uid, instr+1) extracts
+        # the numeric suffix. Rows without ':' produce 0 from CAST and don't
+        # affect the max (real message ids start at 1).
+        known_max: dict[str, int] = {
+            thread_id: max_id
+            for thread_id, max_id in db.execute(
+                """SELECT thread_id,
+                          MAX(CAST(substr(uid, instr(uid, ':') + 1) AS INTEGER))
+                     FROM messages
+                    WHERE backend = ? AND account = ? AND thread_id IS NOT NULL
+                    GROUP BY thread_id""",
+                (self.name, acct["phone"]),
+            )
+            if max_id is not None
+        }
 
         count = 0
         async for dialog in client.iter_dialogs(limit=dialog_limit):

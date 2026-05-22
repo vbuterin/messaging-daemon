@@ -320,22 +320,27 @@ class EmailBackend(Backend):
             print(f"  [email] No accounts configured — skipping poll.")
             return 0
 
+        owned_db = None
         if db is None:
-            db = sqlite3.connect(DB_PATH)
+            db = owned_db = sqlite3.connect(DB_PATH)
 
-        total = 0
-        for acct in accts:
-            folders = acct.get("poll_folders", "INBOX").split(",")
-            for folder in folders:
-                folder = folder.strip()
-                try:
-                    n = self._poll_account_folder(db, acct, folder)
-                    if n:
-                        print(f"  [email] {acct['email']} / {folder}: {n} new")
-                    total += n
-                except Exception as exc:
-                    print(f"  [email] Error polling {acct['email']} / {folder}: {exc}")
-        return total
+        try:
+            total = 0
+            for acct in accts:
+                folders = acct.get("poll_folders", "INBOX").split(",")
+                for folder in folders:
+                    folder = folder.strip()
+                    try:
+                        n = self._poll_account_folder(db, acct, folder)
+                        if n:
+                            print(f"  [email] {acct['email']} / {folder}: {n} new")
+                        total += n
+                    except Exception as exc:
+                        print(f"  [email] Error polling {acct['email']} / {folder}: {exc}")
+            return total
+        finally:
+            if owned_db is not None:
+                owned_db.close()
 
     # ── Confirmation page fields ──────────────────────────────────────────────
 

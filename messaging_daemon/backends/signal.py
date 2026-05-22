@@ -234,48 +234,53 @@ class SignalBackend(Backend):
             print(f"  [signal] signal-cli error: {result.stderr.strip()}")
             return 0
 
+        owned_db = None
         if db is None:
-            db = sqlite3.connect(DB_PATH)
+            db = owned_db = sqlite3.connect(DB_PATH)
 
-        count = 0
-        for line in result.stdout.strip().splitlines():
-            if not line.strip():
-                continue
-            try:
-                envelope = json.loads(line)
-            except json.JSONDecodeError as exc:
-                print(f"  [signal] Failed to parse line: {exc}")
-                continue
+        try:
+            count = 0
+            for line in result.stdout.strip().splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    envelope = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    print(f"  [signal] Failed to parse line: {exc}")
+                    continue
 
-            env = envelope.get("envelope", {})
-            data = env.get("dataMessage", {})
-            body = data.get("message")
-            if not body:
-                continue
+                env = envelope.get("envelope", {})
+                data = env.get("dataMessage", {})
+                body = data.get("message")
+                if not body:
+                    continue
 
-            group_info = data.get("groupInfo") or {}
-            ts = env.get("timestamp") or now_ms()
+                group_info = data.get("groupInfo") or {}
+                ts = env.get("timestamp") or now_ms()
 
-            msg = {
-                "backend":      self.name,
-                "account":      account,
-                "uid":          str(ts) + "_" + (env.get("source") or "unknown"),
-                "sender":       env.get("source"),
-                "sender_name":  env.get("sourceName"),
-                "recipient":    account,
-                "thread_id":    group_info.get("groupId"),
-                "body":         body,
-                "timestamp_ms": ts,
-                "metadata":     envelope,
-            }
-            if store_message(db, msg):
-                count += 1
+                msg = {
+                    "backend":      self.name,
+                    "account":      account,
+                    "uid":          str(ts) + "_" + (env.get("source") or "unknown"),
+                    "sender":       env.get("source"),
+                    "sender_name":  env.get("sourceName"),
+                    "recipient":    account,
+                    "thread_id":    group_info.get("groupId"),
+                    "body":         body,
+                    "timestamp_ms": ts,
+                    "metadata":     envelope,
+                }
+                if store_message(db, msg):
+                    count += 1
 
-        # Only run expiry once per hour — acceptable to keep messages up to
-        # 59 extra minutes rather than pay the O(N) cost every poll cycle.
-        if now_ms() % (3600 * 1000) < 60 * 1000:
-            self._expire_messages(db, account)
-        return count
+            # Only run expiry once per hour — acceptable to keep messages up to
+            # 59 extra minutes rather than pay the O(N) cost every poll cycle.
+            if now_ms() % (3600 * 1000) < 60 * 1000:
+                self._expire_messages(db, account)
+            return count
+        finally:
+            if owned_db is not None:
+                owned_db.close()
 
     # ── Confirmation page fields ──────────────────────────────────────────────
 

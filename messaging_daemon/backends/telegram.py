@@ -45,11 +45,21 @@ class _AsyncRunner:
         with self._lock:
             if self._loop and self._loop.is_running():
                 return self._loop
-            self._loop = asyncio.new_event_loop()
-            self._thread = threading.Thread(
-                target=self._loop.run_forever, daemon=True, name="telegram-loop"
-            )
+            loop = asyncio.new_event_loop()
+            ready = threading.Event()
+
+            def _run() -> None:
+                asyncio.set_event_loop(loop)
+                # call_soon runs after the loop enters its main cycle, so
+                # readers blocked on `ready` will only unblock once the
+                # loop is fully initialised and accepting work.
+                loop.call_soon(ready.set)
+                loop.run_forever()
+
+            self._loop = loop
+            self._thread = threading.Thread(target=_run, daemon=True, name="telegram-loop")
             self._thread.start()
+            ready.wait()
             return self._loop
 
     def run(self, coro):
@@ -291,6 +301,17 @@ class TelegramBackend(Backend):
         if r == account.strip().lower():
             return True
         me = self._get_me(account)
+        if me is None:
+            # First request after daemon start: trigger a Telethon connect
+            # so _client_for populates the cache. Subsequent calls hit the
+            # cache directly.
+            acct = self._get_account_config(account)
+            if acct:
+                try:
+                    _runner.run(self._client_for(acct))
+                    me = self._get_me(account)
+                except Exception:
+                    me = None
         if me:
             if me.get("username") and r.lstrip("@") == me["username"]:
                 return True

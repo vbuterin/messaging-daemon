@@ -69,6 +69,8 @@ class TelegramBackend(Backend):
     def __init__(self) -> None:
         self._clients: dict[str, object] = {}  # phone -> TelegramClient
         self._clients_lock = threading.Lock()
+        # phone -> {"id": int, "username": str|None}; populated on first client use
+        self._me_cache: dict[str, dict] = {}
 
     # ── Account management ────────────────────────────────────────────────────
 
@@ -246,9 +248,24 @@ class TelegramBackend(Backend):
                 f"Telegram session for {phone} is not authorized. "
                 f"Re-run: messaging-daemon telegram add --phone {phone} ..."
             )
+        me = await client.get_me()
+        self._me_cache[phone] = {
+            "id":       getattr(me, "id", None),
+            "username": (getattr(me, "username", None) or "").lower() or None,
+        }
         with self._clients_lock:
             self._clients[phone] = client
         return client
+
+    async def _drop_client(self, phone: str) -> None:
+        """Disconnect and forget the cached client so the next call reconnects."""
+        with self._clients_lock:
+            client = self._clients.pop(phone, None)
+        if client is not None:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
 
     # ── Recipient helpers ─────────────────────────────────────────────────────
 
@@ -258,7 +275,15 @@ class TelegramBackend(Backend):
         r = recipient.strip().lower()
         if r in self.SELF_ALIASES:
             return True
-        return r == account.strip().lower()
+        if r == account.strip().lower():
+            return True
+        me = self._me_cache.get(account)
+        if me:
+            if me.get("username") and r.lstrip("@") == me["username"]:
+                return True
+            if me.get("id") is not None and r == str(me["id"]):
+                return True
+        return False
 
     def _resolve_entity_target(self, recipient: str):
         """Map a recipient string into an argument suitable for client.get_entity."""
@@ -319,9 +344,14 @@ class TelegramBackend(Backend):
         _runner.run(self._send_async(acct, recipient, body))
 
     async def _send_async(self, acct: dict, recipient: str, body: str) -> None:
-        client = await self._client_for(acct)
         target = self._resolve_entity_target(recipient)
-        await client.send_message(target, body)
+        try:
+            client = await self._client_for(acct)
+            await client.send_message(target, body)
+        except (ConnectionError, OSError):
+            await self._drop_client(acct["phone"])
+            client = await self._client_for(acct)
+            await client.send_message(target, body)
 
     # ── Polling ───────────────────────────────────────────────────────────────
 
@@ -340,14 +370,23 @@ class TelegramBackend(Backend):
                 if n:
                     print(f"  [telegram] {acct['phone']}: {n} new")
                 total += n
+            except (ConnectionError, OSError) as exc:
+                print(f"  [telegram] Connection error for {acct['phone']}: {exc} — retrying once")
+                try:
+                    _runner.run(self._drop_client(acct["phone"]))
+                    n = _runner.run(self._poll_account(db, acct))
+                    if n:
+                        print(f"  [telegram] {acct['phone']}: {n} new (after reconnect)")
+                    total += n
+                except Exception as retry_exc:
+                    print(f"  [telegram] Retry failed for {acct['phone']}: {retry_exc}")
             except Exception as exc:
                 print(f"  [telegram] Error polling {acct['phone']}: {exc}")
         return total
 
     async def _poll_account(self, db: sqlite3.Connection, acct: dict) -> int:
         client = await self._client_for(acct)
-        me = await client.get_me()
-        my_id = getattr(me, "id", None)
+        my_id = (self._me_cache.get(acct["phone"]) or {}).get("id")
 
         dialog_limit = int(acct.get("dialog_limit", DEFAULT_DIALOG_LIMIT))
         message_limit = int(acct.get("message_limit", DEFAULT_MESSAGE_LIMIT))

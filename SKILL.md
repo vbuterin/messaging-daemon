@@ -175,6 +175,10 @@ sudo -u messaging-daemon messaging-daemon telegram add \
 sudo systemctl restart messaging-daemon
 ```
 
+> **Credential note:** The login produces a Telethon StringSession that grants full account access (read, send, delete) and is stored unencrypted in `~/.messaging_daemon/messages.db` (alongside Signal and email credentials). Anyone with that file has your Telegram account. Protect file permissions accordingly.
+
+> **First-poll note:** On the first poll after adding an account, the daemon scans the most recently active dialogs (default 50) and fetches up to `message_limit` messages from each (default 30) — so expect an initial backfill of potentially hundreds of messages. Subsequent polls only fetch messages with id greater than the highest already stored for each chat. Quiet chats that are not in the top-N dialogs will only be polled once they become active again.
+
 **To list configured Telegram accounts:**
 ```bash
 sudo -u messaging-daemon messaging-daemon telegram list

@@ -51,10 +51,17 @@ class Backend(ABC):
         """
 
     @abstractmethod
-    def poll(self, db: sqlite3.Connection) -> int:
+    def poll(self, db: sqlite3.Connection | None = None) -> int:
         """
         Fetch new inbound messages and store them via store_message().
         Returns the count of newly stored messages.
+
+        `db` is an optional shared connection created by poll_loop on the
+        main thread. Backends that run entirely on that thread (signal,
+        email) can use it directly. Backends that hand work to another
+        thread (Telegram → Telethon's runner thread) must ignore it and
+        open their own connection, since sqlite3 connections cannot be
+        shared across threads.
         """
 
     @abstractmethod

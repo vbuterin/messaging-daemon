@@ -1,19 +1,19 @@
 ---
 name: messaging-daemon
-description: "Use this skill whenever you need to read or send messages via Signal or email. Triggers include: reading recent Signal messages or emails, querying messages by sender/subject/group, sending a message or email to self or others, listing email folders, or any interaction with the local messaging-daemon running on port 6000. If accounts are not yet configured, this skill explains how to set them up from scratch."
+description: "Use this skill whenever you need to read or send messages via Signal, email, or Telegram. Triggers include: reading recent Signal/Telegram messages or emails, querying messages by sender/subject/group/chat, sending a message or email to self or others, listing email folders, or any interaction with the local messaging-daemon running on port 6000. If accounts are not yet configured, this skill explains how to set them up from scratch."
 ---
 
 # Messaging Daemon HTTP API
 
 ## Overview
 
-A unified local daemon runs on `http://localhost:6000` and handles both Signal and email. All messages — regardless of backend — are stored in a single SQLite database and queryable through the same endpoints.
+A unified local daemon runs on `http://localhost:6000` and handles Signal, email, and Telegram. All messages — regardless of backend — are stored in a single SQLite database and queryable through the same endpoints.
 
 Two HTTP servers run:
 - **Port 6000** — main API (safe to expose to untrusted software)
 - **Port 7000** — confirmation UI (human-facing only; keep away from untrusted software)
 
-**Important:** Sending to self completes immediately on both backends. Sending to anyone else returns a `confirm_url` that **must be shown to the user** — the message is not sent until the user opens that URL in their browser and clicks "Send".
+**Important:** Sending to self completes immediately on all backends. Sending to anyone else returns a `confirm_url` that **must be shown to the user** — the message is not sent until the user opens that URL in their browser and clicks "Send".
 
 > **Warning:** Message responses can be very long. In many circumstances it is more efficient to save the output to a file and then search or chunk it rather than reading it directly:
 > ```bash
@@ -33,8 +33,9 @@ curl "http://localhost:6000/accounts"
 
 ```json
 {
-  "signal": [{"account": "+1234567890", "backend": "signal"}],
-  "email":  [{"account": "bob@proton.me", "imap_host": "127.0.0.1", ...}]
+  "signal":   [{"account": "+1234567890", "backend": "signal"}],
+  "email":    [{"account": "bob@proton.me", "imap_host": "127.0.0.1", ...}],
+  "telegram": [{"account": "+1234567890", "phone": "+1234567890", "api_id": 12345}]
 }
 ```
 
@@ -151,9 +152,49 @@ sudo systemctl restart messaging-daemon
 
 ---
 
+### Setting up Telegram
+
+Telegram uses the MTProto user API via Telethon. Each account needs an `api_id` and `api_hash` (obtained once per developer, free) and an interactive login.
+
+Ask the user to run the following in their terminal:
+
+**Step 1 — Get an `api_id` and `api_hash`**
+
+Go to https://my.telegram.org/apps, log in with the phone number you want to connect, and create an application. Note the `api_id` (integer) and `api_hash` (hex string).
+
+**Step 2 — Add the account to the daemon (interactive)**
+
+This will prompt for the login code Telegram sends, and a 2FA password if one is set:
+```bash
+sudo -u messaging-daemon messaging-daemon telegram add \
+  --phone +1XXXXXXXXXX --api-id 1234567 --api-hash 0123456789abcdef0123456789abcdef
+```
+
+**Step 3 — Restart the daemon**
+```bash
+sudo systemctl restart messaging-daemon
+```
+
+> **Credential note:** The login produces a Telethon StringSession that grants full account access (read, send, delete) and is stored unencrypted in `~/.messaging_daemon/messages.db` (alongside Signal and email credentials). Anyone with that file has your Telegram account. Protect file permissions accordingly.
+
+> **First-poll note:** On the first poll after adding an account, the daemon scans the most recently active dialogs (default 50) and fetches up to `message_limit` messages from each (default 30) — so expect an initial backfill of potentially hundreds of messages. Subsequent polls only fetch messages with id greater than the highest already stored for each chat. Quiet chats that are not in the top-N dialogs will only be polled once they become active again.
+
+**To list configured Telegram accounts:**
+```bash
+sudo -u messaging-daemon messaging-daemon telegram list
+```
+
+**To remove a Telegram account:**
+```bash
+sudo -u messaging-daemon messaging-daemon telegram remove --phone +1XXXXXXXXXX
+sudo systemctl restart messaging-daemon
+```
+
+---
+
 ## Reading Messages
 
-All `/messages` queries work across both backends unless filtered with `?backend=`.
+All `/messages` queries work across all backends unless filtered with `?backend=`.
 
 ### All recent messages (most recent 100, all backends)
 ```bash
@@ -164,6 +205,7 @@ curl "http://localhost:6000/messages"
 ```bash
 curl "http://localhost:6000/messages?backend=signal"
 curl "http://localhost:6000/messages?backend=email"
+curl "http://localhost:6000/messages?backend=telegram"
 ```
 
 ### Filter by account
@@ -252,9 +294,9 @@ curl "http://localhost:6000/messages?since=1774390000000&until=1774399000000"
 ```
 
 ### Notes
-- `subject` is null for Signal messages
-- `thread_id` is the Signal group ID for group messages, null for direct messages
-- `sender_name` is the Signal display name where available, null for email
+- `subject` is null for Signal and Telegram messages
+- `thread_id` is the Signal group ID for Signal group messages (null for Signal DMs), and the Telegram chat ID for every Telegram message (DM or group)
+- `sender` is the sender's user/phone id; `sender_name` is the display name where available, null for email
 - `timestamp_ms` and `received_at` are both milliseconds since Unix epoch
 - Results are ordered by `timestamp_ms` descending (newest first)
 
@@ -314,6 +356,41 @@ curl --get "http://localhost:6000/send" \
   --data-urlencode "body=Hi Alice, this is Bob."
 ```
 
+### Telegram — send to self (Saved Messages, no confirmation required)
+```bash
+curl --get "http://localhost:6000/send" \
+  --data-urlencode "backend=telegram" \
+  --data-urlencode "to=me" \
+  --data-urlencode "body=Note to Saved Messages"
+```
+
+### Telegram — send to another user, chat, or group (confirmation required)
+
+The `to` parameter accepts:
+
+| Format         | Example         | Description                                                       |
+|----------------|-----------------|-------------------------------------------------------------------|
+| `me` / `saved` | `me`            | Saved Messages (self) — bypasses confirmation                     |
+| Username       | `@alice`        | Telegram @username                                                |
+| Phone number   | `+1987654321`   | Must be a contact your account knows                              |
+| Chat ID        | `123456789`     | Numeric user/chat/channel id (matches `thread_id` from /messages) |
+
+```bash
+# By @username
+curl --get "http://localhost:6000/send" \
+  --data-urlencode "backend=telegram" \
+  --data-urlencode "from=+1234567890" \
+  --data-urlencode "to=@alice" \
+  --data-urlencode "body=Hello Alice"
+
+# By chat id (DM or group)
+curl --get "http://localhost:6000/send" \
+  --data-urlencode "backend=telegram" \
+  --data-urlencode "from=+1234567890" \
+  --data-urlencode "to=987654321" \
+  --data-urlencode "body=Hello everyone"
+```
+
 ### Response format — sent immediately
 ```json
 {
@@ -359,13 +436,14 @@ curl "http://localhost:6000/status"
   "message_count": 312,
   "pending_confirmations": 0,
   "backends": {
-    "signal": ["+1234567890"],
-    "email":  ["bob@proton.me", "alice@proton.me"]
+    "signal":   ["+1234567890"],
+    "email":    ["bob@proton.me", "alice@proton.me"],
+    "telegram": ["+1234567890"]
   }
 }
 ```
 
-If `backends.signal` or `backends.email` are empty, no accounts are configured for that backend — present the setup instructions to the user and ask them to run the commands in their own terminal before retrying.
+If any entry under `backends` is empty, no accounts are configured for that backend — present the setup instructions to the user and ask them to run the commands in their own terminal before retrying.
 
 ---
 
@@ -373,16 +451,16 @@ If `backends.signal` or `backends.email` are empty, no accounts are configured f
 
 | Parameter   | Endpoint  | Type   | Description                                                    |
 |-------------|-----------|--------|----------------------------------------------------------------|
-| `backend`   | /messages | string | Filter by backend: `signal` or `email`                         |
+| `backend`   | /messages | string | Filter by backend: `signal`, `email`, or `telegram`            |
 | `account`   | /messages | string | Filter by account (phone number or email address)              |
 | `sender`    | /messages | string | Substring match against sender field                           |
-| `subject`   | /messages | string | Substring match against subject (email only; null for Signal)  |
-| `thread_id` | /messages | string | Exact match: Signal group ID or email thread ID                |
+| `subject`   | /messages | string | Substring match against subject (email only; null otherwise)   |
+| `thread_id` | /messages | string | Exact match: Signal group ID, email thread ID, or Telegram chat ID |
 | `since`     | /messages | int    | Start timestamp in milliseconds (inclusive)                    |
 | `until`     | /messages | int    | End timestamp in milliseconds (inclusive)                      |
 | `limit`     | /messages | int    | Max messages to return (default: 100)                          |
-| `backend`   | /send     | string | Which backend to send via (required if both have accounts)     |
-| `from`      | /send     | string | Sender account (email only; optional if one account)           |
+| `backend`   | /send     | string | Which backend to send via (required if more than one has accounts) |
+| `from`      | /send     | string | Sender account (email/telegram; optional if one account)       |
 | `to`        | /send     | string | Recipient (required)                                           |
 | `subject`   | /send     | string | Email subject (email only; default: "(no subject)")            |
 | `body`      | /send     | string | Message body (required)                                        |

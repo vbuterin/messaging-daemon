@@ -4,13 +4,17 @@ poll.py — shared async poll loop.
 Iterates over all registered backends, calls backend.poll(db) for each,
 and re-reads backend account lists from the DB on every iteration so that
 newly added accounts take effect without a restart.
+
+The shared `db` connection is created here and offered to backends that run
+on this (main) thread. Backends that move work to another thread (Telegram)
+ignore it and open their own — see Backend.poll's docstring.
 """
 
 import asyncio
 import sqlite3
 from datetime import datetime, timezone
 
-from .db import DB_PATH, init_db
+from .db import DB_PATH
 from . import http_api
 
 POLL_INTERVAL = 60  # seconds

@@ -83,10 +83,16 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/send":
             backend_name = first("backend")
             if not backend_name:
-                if len(_backends) == 1:
-                    backend_name = next(iter(_backends))
+                # Auto-pick the backend that has any configured accounts.
+                # Only ambiguous when more than one backend has accounts.
+                configured = [n for n, b in _backends.items() if b.accounts()]
+                if len(configured) == 1:
+                    backend_name = configured[0]
+                elif not configured:
+                    self.send_json({"error": "no backend has any configured accounts"}, 400)
+                    return
                 else:
-                    self.send_json({"error": f"specify ?backend= — available: {list(_backends)}"}, 400)
+                    self.send_json({"error": f"specify ?backend= — configured: {configured}"}, 400)
                     return
 
             backend = _backends.get(backend_name)

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "messaging-daemon"
-version = "0.1.0"
-description = "Unified messaging daemon (Signal, Email, ...)"
+version = "0.1.1"
+description = "Unified messaging daemon (Signal, Telegram, Email, ...)"
 requires-python = ">=3.11"
 dependencies = [
   "telethon>=1.34",
